@@ -12,16 +12,16 @@
 
    * The above copyright notice and this permission notice shall be
      included in all copies or substantial portions of the Software.
- 
+
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND ON
-   INFRINGEMENT. 
+   INFRINGEMENT.
    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
    ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
    CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
    WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- 
+
    The text above constitutes the entire license; however, the
    PortAudio community also makes the following non-binding requests:
 
@@ -62,12 +62,14 @@ typedef struct wav_fmt {
 	unsigned short byps, bips;
 } wav_fmt_t;
 
-SEXP load_wave_file(SEXP src)
+SEXP load_wave_file(SEXP src, SEXP from, SEXP to)
 {
 	if (Rf_inherits(src, "connection"))
 		Rf_error("sorry, connections are not supported yet");
 	if (TYPEOF(src) != STRSXP || LENGTH(src) < 1)
 		Rf_error("invalid file name");
+	if (TYPEOF(from) != REALSXP || TYPEOF(to) != REALSXP)
+	    Rf_error("'from' and 'to' must be numeric");
 	{
 		const char *fName = CHAR(STRING_ELT(src, 0));
 		FILE *f = fopen(fName, "rb");
@@ -76,7 +78,7 @@ SEXP load_wave_file(SEXP src)
 		riff_chunk_t rc;
 		unsigned int to_go = 0, has_fmt = 0;
 		SEXP res = R_NilValue;
-		
+
 		if (!f)
 			Rf_error("unable to open file '%s'", fName);
 		if (fread(&rh, sizeof(rh), 1, f) != 1) {
@@ -87,14 +89,17 @@ SEXP load_wave_file(SEXP src)
 			fclose(f);
 			Rf_error("not a WAVE format");
 		}
+		// Rprintf("initial len %u \n", rh.len);
 		to_go = rh.len;
 		while (!feof(f) && to_go >= 8) {
 			int n = fread(&rc, 1, 8, f);
+		    // Rprintf("n in rc %i \n", n);
 			if (n < 8) {
 				fclose(f);
-				Rf_error("incomplete file");
+				Rf_error("incomplete file 1");
 			}
 			to_go -= n;
+			// Rprintf("togo %u \n", to_go);
 			if (!memcmp(rc.rci, "fmt ", 4)) { /* format chunk */
 				if (to_go < 16) {
 					fclose(f);
@@ -104,13 +109,17 @@ SEXP load_wave_file(SEXP src)
 				n = fread(&fmt.ver, 1, 16, f);
 				if (n < 16) {
 					fclose(f);
-					Rf_error("incomplete file");
+					Rf_error("incomplete file 2");
 				}
 				to_go -= n;
 				has_fmt = 1;
 			} else if (!memcmp(rc.rci, "data", 4)) {
+
 				unsigned int samples = rc.len;
 				unsigned int st = 1;
+
+
+
 				double *d;
 				if (!has_fmt) {
 					fclose(f);
@@ -124,11 +133,34 @@ SEXP load_wave_file(SEXP src)
 					fclose(f);
 					Rf_error("unsupported smaple width: %d bits", fmt.bips);
 				}
+
+				unsigned int from_samp =  round(REAL(from)[0] *  fmt.rate);
+				from_samp *= fmt.chs;
+				unsigned int to_samp;
+
+				if (REAL(to)[0] == NA_REAL) {
+				    to_samp = samples;
+				} else if (REAL(to)[0] * fmt.rate * fmt.chs < samples) {
+				    to_samp = round(fmt.rate * REAL(to)[0]);
+				    to_samp *= fmt.chs;
+				} else {
+				    to_samp = samples;
+				}
+				samples = to_samp - from_samp;
+				// Rprintf("from is %d to is %d samples is %d\n", from_samp, to_samp, samples);
+                fseek(f, from_samp * st, SEEK_CUR);
 				res = Rf_allocVector(REALSXP, samples);
 				n = fread(d = REAL(res), st, samples, f);
+				// Rprintf("read %d data\n", n);
+				// res = Rf_allocVector(REALSXP, to_samp - from_samp);
+				// n = fread(d = REAL(res), st, to_samp - from_samp, f);
 				if (n < samples) {
 					fclose(f);
-					Rf_error("incomplete file");
+					Rf_error("incomplete file 3");
+				}
+				if (to_go > samples * st) {
+				    // Rf_warning("Data does not reach end of file");
+				    to_go = samples * st;
 				}
 				/* now convert the format to doubles, in-place */
 				{
@@ -161,14 +193,16 @@ SEXP load_wave_file(SEXP src)
 					}
 				}
 				n *= st;
+				// Rprintf("togo %d\n", to_go);
 				if (n > to_go) /* it's questionable whether we should bark here - it's file inconsistency to say the least */
 					to_go = 0;
 				else
 					to_go -= n;
+				// Rprintf("togo %d\n", to_go);
 			} else { /* skip any chunks we don't know */
 				if (rc.len > to_go || fseek(f, rc.len, SEEK_CUR)) {
 					fclose(f);
-					Rf_error("incomplete file");
+					Rf_error("incomplete file 4");
 				}
 				to_go -= rc.len;
 			}
@@ -200,7 +234,7 @@ SEXP save_wave_file(SEXP where, SEXP what) {
 	unsigned int rate = 44100;
 	unsigned int chs = 1;
 	unsigned int bits = 16, bps = 2;
-	
+
 	SEXP dim = Rf_getAttrib(what, R_DimSymbol);
 	if (TYPEOF(dim) == INTSXP && LENGTH(dim) > 1 && INTEGER(dim)[0] == 2) chs = 2;
 	dim = Rf_getAttrib(what, Rf_install("bits"));
@@ -214,12 +248,12 @@ SEXP save_wave_file(SEXP where, SEXP what) {
 		rate = Rf_asInteger(dim);
 	if (TYPEOF(what) != REALSXP)
 		Rf_error("saved object must be in real form");
-	
+
 	if (Rf_inherits(where, "connection"))
 		Rf_error("sorry, connections are not supported yet");
 	if (TYPEOF(where) != STRSXP || LENGTH(where) < 1)
 		Rf_error("invalid file name");
-	
+
 	{
 		const char *fName = CHAR(STRING_ELT(where, 0));
 		riff_header_t rh = { "RIFF", size + 36, "WAVE" };
