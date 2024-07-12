@@ -1,6 +1,8 @@
 /* WAVE file manipulation for R
    audio R package
    Copyright(c) 2008 Simon Urbanek
+   Modified 2024-07 by Taiki Sakai to add to/from feature
+     and avoid crashes on some wav files
 
    Permission is hereby granted, free of charge, to any person
    obtaining a copy of this software and associated documentation
@@ -62,7 +64,7 @@ typedef struct wav_fmt {
 	unsigned short byps, bips;
 } wav_fmt_t;
 
-SEXP load_wave_file(SEXP src, SEXP from, SEXP to)
+SEXP load_wave_file(SEXP src, SEXP from, SEXP to, SEXP header)
 {
 	if (Rf_inherits(src, "connection"))
 		Rf_error("sorry, connections are not supported yet");
@@ -70,6 +72,9 @@ SEXP load_wave_file(SEXP src, SEXP from, SEXP to)
 		Rf_error("invalid file name");
 	if (TYPEOF(from) != REALSXP || TYPEOF(to) != REALSXP)
 	    Rf_error("'from' and 'to' must be numeric");
+	if (TYPEOF(header) != INTSXP)
+	    Rf_error("'header' must be TRUE or FALSE");
+
 	{
 		const char *fName = CHAR(STRING_ELT(src, 0));
 		FILE *f = fopen(fName, "rb");
@@ -89,17 +94,14 @@ SEXP load_wave_file(SEXP src, SEXP from, SEXP to)
 			fclose(f);
 			Rf_error("not a WAVE format");
 		}
-		// Rprintf("initial len %u \n", rh.len);
 		to_go = rh.len;
 		while (!feof(f) && to_go >= 8) {
 			int n = fread(&rc, 1, 8, f);
-		    // Rprintf("n in rc %i \n", n);
 			if (n < 8) {
 				fclose(f);
 				Rf_error("incomplete file 1");
 			}
 			to_go -= n;
-			// Rprintf("togo %u \n", to_go);
 			if (!memcmp(rc.rci, "fmt ", 4)) { /* format chunk */
 				if (to_go < 16) {
 					fclose(f);
@@ -117,8 +119,6 @@ SEXP load_wave_file(SEXP src, SEXP from, SEXP to)
 
 				unsigned int samples = rc.len;
 				unsigned int st = 1;
-
-
 
 				double *d;
 				if (!has_fmt) {
@@ -146,14 +146,43 @@ SEXP load_wave_file(SEXP src, SEXP from, SEXP to)
 				} else {
 				    to_samp = samples;
 				}
+				int isHeader = *INTEGER(header);
+
+				if (isHeader == 1) {
+				    SEXP res = PROTECT(Rf_allocVector(VECSXP, 4));
+                    SET_VECTOR_ELT(res, 0, Rf_ScalarInteger(fmt.rate));       /* numeric(1) */
+                    SET_VECTOR_ELT(res, 1, Rf_ScalarInteger(fmt.chs));   /* numeric(<some length>) */
+                    SET_VECTOR_ELT(res, 2, Rf_ScalarInteger(fmt.bips));
+                    SET_VECTOR_ELT(res, 3, Rf_ScalarInteger(samples / fmt.chs));
+                    UNPROTECT(1);
+
+                    return res;
+				    res = Rf_allocVector(REALSXP, 0);
+				    Rf_protect(res);
+				    {
+				        SEXP sym = Rf_protect(Rf_install("rate"));
+				        Rf_setAttrib(res, sym, Rf_ScalarInteger(fmt.rate));
+				        Rf_unprotect(1);
+				        sym = Rf_protect(Rf_install("bits"));
+				        Rf_setAttrib(res, sym, Rf_ScalarInteger(fmt.bips));
+				        Rf_unprotect(1);
+				        sym = Rf_protect(Rf_install("channels"));
+				        Rf_setAttrib(res, sym, Rf_ScalarInteger(fmt.chs));
+				        Rf_unprotect(1);
+				        sym = Rf_protect(Rf_install("samples"));
+				        Rf_setAttrib(res, sym, Rf_ScalarInteger(samples / fmt.chs));
+				        Rf_unprotect(1);
+				        Rf_setAttrib(res, R_ClassSymbol, Rf_mkString("audioSample"));
+				        return res;
+				    }
+
+				}
 				samples = to_samp - from_samp;
-				// Rprintf("from is %d to is %d samples is %d\n", from_samp, to_samp, samples);
                 fseek(f, from_samp * st, SEEK_CUR);
+
 				res = Rf_allocVector(REALSXP, samples);
 				n = fread(d = REAL(res), st, samples, f);
-				// Rprintf("read %d data\n", n);
-				// res = Rf_allocVector(REALSXP, to_samp - from_samp);
-				// n = fread(d = REAL(res), st, to_samp - from_samp, f);
+
 				if (n < samples) {
 					fclose(f);
 					Rf_error("incomplete file 3");
@@ -193,12 +222,10 @@ SEXP load_wave_file(SEXP src, SEXP from, SEXP to)
 					}
 				}
 				n *= st;
-				// Rprintf("togo %d\n", to_go);
 				if (n > to_go) /* it's questionable whether we should bark here - it's file inconsistency to say the least */
 					to_go = 0;
 				else
 					to_go -= n;
-				// Rprintf("togo %d\n", to_go);
 			} else { /* skip any chunks we don't know */
 				if (rc.len > to_go || fseek(f, rc.len, SEEK_CUR)) {
 					fclose(f);
