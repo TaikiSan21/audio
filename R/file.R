@@ -1,7 +1,6 @@
 load.wave <- function(where, from=0, to=NA_real_, header=FALSE) {
     from <- as.numeric(from)
     to <- as.numeric(to)
-    # header <- as.integer(header)
     result <- .Call(load_wave_file, where, from, to, as.integer(header), PACKAGE="audio")
     if(header) {
         names(result) <- c('sample.rate', 'channels', 'bits', 'samples')

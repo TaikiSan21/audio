@@ -155,27 +155,8 @@ SEXP load_wave_file(SEXP src, SEXP from, SEXP to, SEXP header)
                     SET_VECTOR_ELT(res, 2, Rf_ScalarInteger(fmt.bips));
                     SET_VECTOR_ELT(res, 3, Rf_ScalarInteger(samples / fmt.chs));
                     UNPROTECT(1);
-
+                    // after this we assign names in R
                     return res;
-				    res = Rf_allocVector(REALSXP, 0);
-				    Rf_protect(res);
-				    {
-				        SEXP sym = Rf_protect(Rf_install("rate"));
-				        Rf_setAttrib(res, sym, Rf_ScalarInteger(fmt.rate));
-				        Rf_unprotect(1);
-				        sym = Rf_protect(Rf_install("bits"));
-				        Rf_setAttrib(res, sym, Rf_ScalarInteger(fmt.bips));
-				        Rf_unprotect(1);
-				        sym = Rf_protect(Rf_install("channels"));
-				        Rf_setAttrib(res, sym, Rf_ScalarInteger(fmt.chs));
-				        Rf_unprotect(1);
-				        sym = Rf_protect(Rf_install("samples"));
-				        Rf_setAttrib(res, sym, Rf_ScalarInteger(samples / fmt.chs));
-				        Rf_unprotect(1);
-				        Rf_setAttrib(res, R_ClassSymbol, Rf_mkString("audioSample"));
-				        return res;
-				    }
-
 				}
 				samples = to_samp - from_samp;
                 fseek(f, from_samp * st, SEEK_CUR);

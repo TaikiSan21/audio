@@ -10,15 +10,19 @@
   \code{save.wave} saves a sample into a WAVE file
 }
 \usage{
-load.wave(where)
+load.wave(where, from, to, header)
 save.wave(what, where)
 }
 \arguments{
   \item{where}{file name of the file to load from or save to}
+  \item{from}{start point to load data from (seconds)}
+  \item{to}{end point to read data to (seconds), \code{NA} to read til end}
+  \item{header}{logical flag to read only header information}
   \item{what}{audioSample object to save}
 }
 \value{
-  \code{load.wave} returns an object of the class \code{audioSample} as loaded from the WAVE file
+  \code{load.wave} returns an object of the class \code{audioSample} as loaded from the WAVE file,
+    or if \code{header=TRUE} a named list with the sample.rate, num channels, bit rate, and sample length
 
   \code{save.wave} always returns \code{NULL}
 }
